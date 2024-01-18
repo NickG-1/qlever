@@ -1,3 +1,7 @@
+//  Copyright 2023, University of Freiburg,
+//                  Chair of Algorithms and Data Structures.
+//  Author: Nick Göckel <nick.goeckel@students.uni-freiburg.de>
+
 #pragma once
 
 #include <string>
@@ -16,13 +20,11 @@ class TextIndexScanForWord : public Operation {
   TextIndexScanForWord(QueryExecutionContext* qec, Variable textRecordVar,
                        string word);
 
-  Variable textRecordVar() const { return textRecordVar_; }
+  ~TextIndexScanForWord() override = default;
 
-  std::string word() const { return word_; }
+  const Variable& textRecordVar() const { return textRecordVar_; }
 
-  virtual ~TextIndexScanForWord() = default;
-
-  vector<QueryExecutionTree*> getChildren() override { return {}; }
+  const std::string& word() const { return word_; }
 
   string getCacheKeyImpl() const override;
 
@@ -30,7 +32,9 @@ class TextIndexScanForWord : public Operation {
 
   size_t getResultWidth() const override;
 
-  void setTextLimit(size_t) override {}
+  void setTextLimit(size_t) override {
+    // TODO: implement textLimit
+  }
 
   size_t getCostEstimate() override;
 
@@ -41,15 +45,16 @@ class TextIndexScanForWord : public Operation {
     return 1;
   }
 
-  bool knownEmptyResult() override {
-    return getExecutionContext()->getIndex().getWordSizeEstimate(word_) == 0;
-  }
+  bool knownEmptyResult() override { return getSizeEstimateBeforeLimit() == 0; }
 
   vector<ColumnIndex> resultSortedOn() const override;
 
+  VariableToColumnMap computeVariableToColumnMap() const override;
+
+ private:
   // Returns a ResultTable containing an IdTable with the columns being
-  // the text-variable and the completed word (if it was prefixed)
+  // the text variable and the completed word (if it was prefixed)
   ResultTable computeResult() override;
 
-  VariableToColumnMap computeVariableToColumnMap() const override;
+  vector<QueryExecutionTree*> getChildren() override { return {}; }
 };

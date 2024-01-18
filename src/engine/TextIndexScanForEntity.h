@@ -1,3 +1,7 @@
+//  Copyright 2023, University of Freiburg,
+//                  Chair of Algorithms and Data Structures.
+//  Author: Nick Göckel <nick.goeckel@students.uni-freiburg.de>
+
 #pragma once
 
 #include <string>
@@ -9,58 +13,66 @@
 // The entities are saved to the entityVar_. If the operation is called on a
 // fixed entity instead, it only returns entries that contain this entity.
 class TextIndexScanForEntity : public Operation {
- public:
+  using FixedEntity = std::pair<std::string, VocabIndex>;
+
   struct VarOrFixedEntity {
-    VarOrFixedEntity(const QueryExecutionContext* qec,
-                     const std::variant<Variable, std::string>& entity) {
+    std::variant<Variable, FixedEntity> entity_;
+
+    static std::variant<Variable, FixedEntity> makeEntityVariant(
+        const QueryExecutionContext* qec,
+        std::variant<Variable, std::string> entity) {
       if (std::holds_alternative<std::string>(entity)) {
-        fixedEntity_.emplace(std::get<std::string>(entity));
-        bool success =
-            qec->getIndex().getVocab().getId(fixedEntity_.value(), &index_);
+        VocabIndex index;
+        std::string fixedEntity = std::move(std::get<std::string>(entity));
+        bool success = qec->getIndex().getVocab().getId(fixedEntity, &index);
         if (!success) {
           throw std::runtime_error(
-              "The entity " + fixedEntity_.value() +
+              "The entity " + fixedEntity +
               " is not part of the underlying knowledge graph and can "
-              "therefore "
-              "not be used as the object of ql:contains-entity");
+              "therefore not be used as the object of ql:contains-entity");
         }
+        return FixedEntity(std::move(fixedEntity), std::move(index));
       } else {
-        entityVar_.emplace(std::get<Variable>(entity));
+        return std::get<Variable>(entity);
       }
-    }
-    ~VarOrFixedEntity() {}
+    };
 
-    std::optional<std::string> fixedEntity_ = std::nullopt;
-    VocabIndex index_;
-    std::optional<Variable> entityVar_ = std::nullopt;
+    VarOrFixedEntity(const QueryExecutionContext* qec,
+                     std::variant<Variable, std::string> entity)
+        : entity_(makeEntityVariant(qec, std::move(entity))) {}
+
+    ~VarOrFixedEntity() = default;
+
+    bool hasFixedEntity() const {
+      return std::holds_alternative<FixedEntity>(entity_);
+    }
   };
 
- private:
   const Variable textRecordVar_;
-  const VarOrFixedEntity entity_;
+  const VarOrFixedEntity varOrFixed_;
   const string word_;
 
  public:
   TextIndexScanForEntity(QueryExecutionContext* qec, Variable textRecordVar,
-                         std::variant<Variable, std::string> entity_,
+                         std::variant<Variable, std::string> entity,
                          string word);
-  virtual ~TextIndexScanForEntity() = default;
+  ~TextIndexScanForEntity() override = default;
 
-  bool hasFixedEntity() const { return entity_.fixedEntity_.has_value(); };
+  bool hasFixedEntity() const { return varOrFixed_.hasFixedEntity(); }
 
-  vector<QueryExecutionTree*> getChildren() override { return {}; }
-
-  Variable textRecordVar() const { return textRecordVar_; }
-
-  std::variant<Variable, std::string> entity() const {
-    if (hasFixedEntity()) {
-      return entity_.fixedEntity_.value();
-    } else {
-      return entity_.entityVar_.value();
-    }
+  const std::string& fixedEntity() const {
+    AD_CONTRACT_CHECK(hasFixedEntity());
+    return std::get<FixedEntity>(varOrFixed_.entity_).first;
   }
 
-  std::string word() const { return word_; }
+  const Variable& entityVariable() const {
+    AD_CONTRACT_CHECK(!hasFixedEntity());
+    return std::get<Variable>(varOrFixed_.entity_);
+  }
+
+  const Variable& textRecordVar() const { return textRecordVar_; }
+
+  const std::string& word() const { return word_; }
 
   string getCacheKeyImpl() const override;
 
@@ -68,7 +80,9 @@ class TextIndexScanForEntity : public Operation {
 
   size_t getResultWidth() const override;
 
-  void setTextLimit(size_t) override {}
+  void setTextLimit(size_t) override {
+    // TODO: implement textLimit
+  }
 
   size_t getCostEstimate() override;
 
@@ -83,7 +97,15 @@ class TextIndexScanForEntity : public Operation {
 
   vector<ColumnIndex> resultSortedOn() const override;
 
+  VariableToColumnMap computeVariableToColumnMap() const override;
+
+ private:
+  const VocabIndex& getVocabIndexOfFixedEntity() const {
+    AD_CONTRACT_CHECK(hasFixedEntity());
+    return std::get<FixedEntity>(varOrFixed_.entity_).second;
+  }
+
   ResultTable computeResult() override;
 
-  VariableToColumnMap computeVariableToColumnMap() const override;
+  vector<QueryExecutionTree*> getChildren() override { return {}; }
 };

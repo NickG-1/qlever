@@ -9,6 +9,7 @@
 #include <absl/strings/str_split.h>
 
 #include <algorithm>
+#include <charconv>
 #include <ranges>
 #include <stxxl/algorithm>
 #include <tuple>
@@ -130,37 +131,37 @@ void IndexImpl::addTextFromContextFile(const string& contextFile,
 }
 
 // _____________________________________________________________________________
-void IndexImpl::buildDocsDB(const string& docsFileName) {
+void IndexImpl::buildDocsDB(const string& docsFileName) const {
   LOG(INFO) << "Building DocsDB...\n";
-  ad_utility::File docsFile(docsFileName.c_str(), "r");
+  std::ifstream docsFile{docsFileName};
   std::ofstream ofs(onDiskBase_ + ".text.docsDB", std::ios_base::out);
   // To avoid excessive use of RAM,
   // we write the offsets to and stxxl:vector first;
-  typedef stxxl::vector<off_t> OffVec;
-  OffVec offsets;
+  stxxl::vector<off_t> offsets;
   off_t currentOffset = 0;
   uint64_t currentContextId = 0;
-  char* buf = new char[BUFFER_SIZE_DOCSFILE_LINE];
   string line;
-  while (docsFile.readLine(&line, buf, BUFFER_SIZE_DOCSFILE_LINE)) {
-    size_t tab = line.find('\t');
-    uint64_t contextId = atol(line.substr(0, tab).c_str());
-    line = line.substr(tab + 1);
-    ofs << line;
+  line.reserve(BUFFER_SIZE_DOCSFILE_LINE);
+  while (std::getline(docsFile, line)) {
+    std::string_view lineView = line;
+    size_t tab = lineView.find('\t');
+    uint64_t contextId = 0;
+    std::from_chars(lineView.data(), lineView.data() + tab, contextId);
+    lineView = lineView.substr(tab + 1);
+    ofs << lineView;
     while (currentContextId < contextId) {
       offsets.push_back(currentOffset);
       currentContextId++;
     }
     offsets.push_back(currentOffset);
     currentContextId++;
-    currentOffset += line.size();
+    currentOffset += static_cast<off_t>(lineView.size());
   }
   offsets.push_back(currentOffset);
 
-  delete[] buf;
   ofs.close();
   // Now append the tmp file to the docsDB file.
-  ad_utility::File out(string(onDiskBase_ + ".text.docsDB").c_str(), "a");
+  ad_utility::File out(onDiskBase_ + ".text.docsDB", "a");
   for (size_t i = 0; i < offsets.size(); ++i) {
     off_t cur = offsets[i];
     out.write(&cur, sizeof(cur));
@@ -1466,7 +1467,7 @@ size_t IndexImpl::getIndexOfBestSuitedElTerm(
 }
 
 // _____________________________________________________________________________
-size_t IndexImpl::getEntitySizeEstimate(const string& word) const {
+size_t IndexImpl::getSizeOfTextBlockForEntities(const string& word) const {
   if (word.empty()) {
     return 0;
   }
@@ -1478,14 +1479,7 @@ size_t IndexImpl::getEntitySizeEstimate(const string& word) const {
 }
 
 // _____________________________________________________________________________
-size_t IndexImpl::getWordSizeEstimate(const string& word) const {
-  // Returns the size of the whole textblock. If the word is very long or not
-  // prefixed then only a small number of words actually match. So the final
-  // result is much smaller.
-  // Note that as a cost estimate the estimation is correct. Because we always
-  // have to read the complete block and then filter by the actually needed
-  // words.
-  // TODO: improve size estimate by adding a correction factor.
+size_t IndexImpl::getSizeOfTextBlockForWord(const string& word) const {
   if (word.empty()) {
     return 0;
   }
@@ -1524,10 +1518,12 @@ auto IndexImpl::getTextBlockMetadataForWordOrPrefix(const std::string& word)
   AD_CORRECTNESS_CHECK(!word.empty());
   IdRange<WordVocabIndex> idRange;
   if (word.ends_with(PREFIX_CHAR)) {
-    if (!textVocab_.getIdRangeForFullTextPrefix(word, &idRange)) {
+    auto idRangeOpt = textVocab_.getIdRangeForFullTextPrefix(word);
+    if (!idRangeOpt.has_value()) {
       LOG(INFO) << "Prefix: " << word << " not in vocabulary\n";
       return std::nullopt;
     }
+    idRange = idRangeOpt.value();
   } else {
     WordVocabIndex idx;
     if (!textVocab_.getId(word, &idx)) {

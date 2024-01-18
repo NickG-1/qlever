@@ -798,6 +798,12 @@ TEST(QueryPlannerTest, TextIndexScanForWord) {
                         wordScan(Var{"?text2"}, "words*"),
                         wordScan(Var{"?text2"}, "multiple")),
       qec);
+
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      SparqlParser::parseQuery(
+          "SELECT * WHERE { ?text ql:contains-word <test> . }"),
+      ::testing::ContainsRegex(
+          "ql:contains-word has to be followed by a string in quotes"));
 }
 
 // __________________________________________________________________________
@@ -825,6 +831,14 @@ TEST(QueryPlannerTest, TextIndexScanForEntity) {
               entityScan(Var{"?text"}, "<testEntity>", "test")),
       qec);
 
+  // Test case sensitivity
+  h::expect(
+      "SELECT * WHERE { ?text ql:contains-entity <testEntity> . ?text "
+      "ql:contains-word \"TeST\" }",
+      h::Join(wordScan(Var{"?text"}, "test"),
+              entityScan(Var{"?text"}, "<testEntity>", "test")),
+      qec);
+
   // NOTE: It is important that the TextIndexScanForEntity uses "opti", because
   // we also want to test here if the QueryPlanner assigns the optimal word to
   // the Operation.
@@ -837,4 +851,27 @@ TEST(QueryPlannerTest, TextIndexScanForEntity) {
                         wordScan(Var{"?text"}, "opti"),
                         wordScan(Var{"?text"}, "picking*")),
       qec);
+
+  ParsedQuery pq = SparqlParser::parseQuery(
+      "SELECT * WHERE { ?text ql:contains-entity ?scientist . }");
+  QueryPlanner qp(nullptr);
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      qp.createExecutionTree(pq),
+      ::testing::ContainsRegex(
+          "Missing ql:contains-word statement. A ql:contains-entity statement "
+          "always also needs corresponding ql:contains-word statement."));
+}
+
+// __________________________________________________________________________
+TEST(QueryPlannerTest, TooManyTriples) {
+  std::string query = "SELECT * WHERE {";
+  for (size_t i = 0; i < 65; i++) {
+    query = absl::StrCat(query, " ?x <p> ?y .");
+  }
+  query = absl::StrCat(query, "}");
+  ParsedQuery pq = SparqlParser::parseQuery(query);
+  QueryPlanner qp(nullptr);
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      qp.createExecutionTree(pq),
+      ::testing::ContainsRegex("At most 64 triples allowed at the moment."));
 }
